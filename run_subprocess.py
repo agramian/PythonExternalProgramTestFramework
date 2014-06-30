@@ -49,41 +49,21 @@ def run_subprocess(executable_command,
         global process, _nbsr_stdout, _nbsr_stderr
         process = subprocess.Popen([executable_command] + command_arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         # wrap p.stdout with a NonBlockingStreamReader object:
-        _nbsr_stdout = NBSRW(process.stdout)
-        _nbsr_stderr = NBSRW(process.stderr)
+        _nbsr_stdout = NBSRW(process.stdout, stdout_file)
+        _nbsr_stderr = NBSRW(process.stderr, stderr_file)
         # set deadline if timeout was set
         _deadline = None
         if timeout is not None:           
             _deadline = time.time() + timeout
-        # store process output to write it later
-        process_output = ""
         # poll process while it runs
         while process.poll() is None:
-            # print output while running if lag set
-            if print_process_output:                 
-                print process_output
             # throw TimeoutError if timeout was specified and deadline has passed           
             if _deadline is not None and time.time() > _deadline and process.poll() is None:
                 process.terminate()
                 raise TimeoutError("Sub-process did not complete before %.4f seconds elapsed" %(timeout))
             # sleep to yield for other processes           
             time.sleep(poll_seconds)
-    execution_time = timeit.timeit(_exec_subprocess, number=1)
-    print 'all output:', _nbsr_stdout.get_all_output()
-    print 'all err output:', _nbsr_stderr.get_all_output()
-    #process_output += '\n'.join([x for x in [_nbsr_stdout.readline(), _nbsr_stderr.readline()] if x is not None])
-    # write the process output to the files if specified
-    if stdout_file is not None or stderr_file is not None:  
-        if stdout_file == stderr_file:
-            with open(stdout_file, 'a') as f:
-                f.write(_nbsr_stdout.get_all_output())  
-        else:
-            if stdout_file is not None:
-                with open(stdout_file, 'a') as f:
-                    f.write(_nbsr_stdout.get_all_output())                 
-            if stderr_file is not None:
-                with open(stderr_file, 'a') as f:
-                    f.write(_nbsr_stderr.get_all_output())                              
+    execution_time = timeit.timeit(_exec_subprocess, number=1)                             
     # return process to allow application to communicate with it
     # and extract whatever info like stdout, stderr, returncode
     # also return execution_time to allow 

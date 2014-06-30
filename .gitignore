@@ -1,0 +1,8 @@
+
+*.pyc
+
+.pydevproject
+
+*.log
+
+Tango-QA_Assignment-Python_MiniTest_Framework.py
