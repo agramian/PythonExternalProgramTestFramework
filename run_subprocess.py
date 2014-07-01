@@ -9,10 +9,10 @@ from nbstream_readerwriter import NonBlockingStreamReaderWriter as NBSRW
 
 def run_subprocess(executable_command,
                    command_arguments = [],
+                   timeout=None,
                    print_process_output=True,
                    stdout_file=None,
                    stderr_file=None,
-                   timeout=None,
                    poll_seconds=.100):
     """Create and run a subprocess and return the process and
     execution time after it has completed.  The execution time
@@ -21,19 +21,22 @@ def run_subprocess(executable_command,
 
     Positional arguments:
     executable_command (str) -- executable command to run
-    command_arguments (list) -- arguments or  
+    command_arguments (list) -- command line arguments
+    timeout (int/float) -- how many seconds to allow for process completion
     print_process_output (bool) -- whether to print the process' live output 
     stdout_file (str) -- file to log stdout to
-    stderr_file (str) -- file to log stderr to              
+    stderr_file (str) -- file to log stderr to
+    poll_seconds(int/float) -- how often in seconds to poll the subprocess 
+                                to check for completion
     """
     # validate arguments
     # list
     assert_variable_type(command_arguments, list)     
     # strings
-    _string_vars = [executable_command,
-                    stdout_file,
+    assert_variable_type(executable_command, str) 
+    _string_vars = [stdout_file,
                     stderr_file]
-    [assert_variable_type(x, str) for x in _string_vars + command_arguments]
+    [assert_variable_type(x, [str, NoneType]) for x in _string_vars + command_arguments]
     # bools 
     assert_variable_type(print_process_output, bool) 
     # floats
@@ -49,8 +52,8 @@ def run_subprocess(executable_command,
         global process, _nbsr_stdout, _nbsr_stderr
         process = subprocess.Popen([executable_command] + command_arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         # wrap p.stdout with a NonBlockingStreamReader object:
-        _nbsr_stdout = NBSRW(process.stdout, stdout_file)
-        _nbsr_stderr = NBSRW(process.stderr, stderr_file)
+        _nbsr_stdout = NBSRW(process.stdout, print_process_output, stdout_file)
+        _nbsr_stderr = NBSRW(process.stderr, print_process_output, stderr_file)
         # set deadline if timeout was set
         _deadline = None
         if timeout is not None:           

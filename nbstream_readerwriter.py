@@ -10,7 +10,7 @@ class NonBlockingStreamReaderWriter:
     """A non-blocking stream reader/writer              
     """
 
-    def __init__(self, stream, log_file=None):
+    def __init__(self, stream, print_stream=True, log_file=None):
         """Initialize the stream reader/writer
         
         Positional arguments:
@@ -34,6 +34,8 @@ class NonBlockingStreamReaderWriter:
                 line = stream.readline()
                 if line:
                     queue.put(line)
+                    if print_stream:
+                        print(line)
                     self._output += line + "\r\n"
                     if log_file is not None:
                         with open(log_file, 'a') as f:
