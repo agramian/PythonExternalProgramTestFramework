@@ -13,7 +13,8 @@ def run_subprocess(executable_command,
                    print_process_output=True,
                    stdout_file=None,
                    stderr_file=None,
-                   poll_seconds=.100):
+                   poll_seconds=.100,
+                   buffer_size=-1):
     """Create and run a subprocess and return the process and
     execution time after it has completed.  The execution time
     does not include the time taken for file i/o when logging
@@ -50,18 +51,18 @@ def run_subprocess(executable_command,
     def _exec_subprocess():
         # create the subprocess to run the external program
         global process, _nbsr_stdout, _nbsr_stderr
-        process = subprocess.Popen([executable_command] + command_arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        process = subprocess.Popen([executable_command] + command_arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=buffer_size)
         # wrap p.stdout with a NonBlockingStreamReader object:
         _nbsr_stdout = NBSRW(process.stdout, print_process_output, stdout_file)
         _nbsr_stderr = NBSRW(process.stderr, print_process_output, stderr_file)
         # set deadline if timeout was set
         _deadline = None
         if timeout is not None:           
-            _deadline = time.time() + timeout
+            _deadline = time.clock() + timeout
         # poll process while it runs
         while process.poll() is None:
             # throw TimeoutError if timeout was specified and deadline has passed           
-            if _deadline is not None and time.time() > _deadline and process.poll() is None:
+            if _deadline is not None and time.clock() > _deadline and process.poll() is None:
                 process.terminate()
                 raise TimeoutError("Sub-process did not complete before %.4f seconds elapsed" %(timeout))
             # sleep to yield for other processes           

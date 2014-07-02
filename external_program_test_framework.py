@@ -4,6 +4,7 @@
 import sys
 import os
 import shutil
+import time
 import timeit
 from sets import Set
 import colorama
@@ -14,6 +15,7 @@ Fore: BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE, RESET.
 Back: BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE, RESET.
 Style: DIM, NORMAL, BRIGHT, RESET_ALL
 """
+from test_case_decorators import *
 from assert_variable_type import *
 from run_subprocess import run_subprocess, TimeoutError
 
@@ -75,7 +77,7 @@ class ExternalProgramTestSuite:
                                                                           'num_checks_passed': 0,
                                                                           'execution_time': 0,
                                                                           'has_run': False,
-                                                                          'status_threshold': 100,
+                                                                          'pass_threshold': 100,
                                                                           'passed': False}
             else:
                 raise ValueError('A suite with the name "%s" already exists. '
@@ -125,7 +127,7 @@ class ExternalProgramTestSuite:
         self._total_checks = 0        
         # threshold in percentage of tests
         # passed to decide status of suite
-        self.suite_status_threshold = 100
+        self.suite_pass_threshold = 100
         # whether to truncate the log file
         # before writing to it
         self.overwrite_log_file = True
@@ -139,9 +141,10 @@ class ExternalProgramTestSuite:
         # setup and teardown function
         self._suite_setup = None
         self._suite_teardown = None
-        # timeout values
-        self.suite_timeout = None
-        self.suite_case_timeout = None                        
+        # timelimit values
+        self._suite_timelimit_met = True
+        self.suite_timelimit = None
+        self.suite_case_timelimit = None                        
 
     def _set_case_defaults(self):
         """ 
@@ -161,9 +164,9 @@ class ExternalProgramTestSuite:
         self._num_checks = 0
         # threshold in percentage of checks
         # passed to decide status of case
-        self.case_status_threshold = 100
-        # subprocess timeout
-        self.timeout = self.suite_case_timeout
+        self.case_pass_threshold = 100
+        # test case time limit
+        self._timelimit = self.suite_case_timelimit
         # skip setup and teardown
         self._skip_setup = False
         self._skip_teardown = False
@@ -223,9 +226,9 @@ class ExternalProgramTestSuite:
                      self._skip_teardown]
         [assert_variable_type(x, bool) for x in bool_vars]
         # float
-        float_vars = [self.timeout,
-                      self.suite_timeout,
-                      self.suite_case_timeout]
+        float_vars = [self._timelimit,
+                      self.suite_timelimit,
+                      self.suite_case_timelimit]
         [assert_variable_type(x, [int, float, NoneType]) for x in float_vars]
         # functions
         function_vars = [self._suite_setup,
@@ -236,6 +239,8 @@ class ExternalProgramTestSuite:
         """
         Run the test suite
         """
+        # capture start time
+        suite_start_time = time.clock() 
         # setup suite
         if suite_name is None:
             suite_name = self.suite_name
@@ -274,12 +279,28 @@ class ExternalProgramTestSuite:
             ExternalProgramTestSuite._has_run = True
             # set suite attributes for static _test_suites list
             ExternalProgramTestSuite._test_suites[self.suite_name]['has_run'] = True
-            ExternalProgramTestSuite._test_suites[self.suite_name]['status_threshold'] = self.suite_status_threshold
+            ExternalProgramTestSuite._test_suites[self.suite_name]['pass_threshold'] = self.suite_pass_threshold
             # end case routine
             self._end_case()
         # call suite teardown function if set
         if self._suite_teardown is not None:
             self._suite_teardown()
+        # capture suite end time
+        suite_end_time = time.clock()
+        suite_time_take = suite_end_time - suite_start_time
+        ExternalProgramTestSuite._test_suites[self.suite_name]['execution_time'] = suite_time_take
+        # if a timelimit was set
+        # check if it was met
+        if self.suite_timelimit is not None:
+            self.log("_" * ExternalProgramTestSuite._num_formatting_chars)
+            if suite_time_take <= self.suite_timelimit:
+                self.log('CHECK PASS: suite completed before time limit of %.4f' %self.suite_timelimit, False, Back.GREEN)
+                self._total_checks_passed += 1
+            else:
+                self.log('CHECK FAIL: suite did not complete before time limit of %.4f' %self.suite_timelimit, True, Back.RED)
+                self._suite_timelimit_met = False
+            self._total_checks += 1                            
+            
         # print test result
         self._print_suite_results()       
 
@@ -289,7 +310,16 @@ class ExternalProgramTestSuite:
         Run an individual test case
         """
         # run test case
-        execution_time = timeit.timeit(self.test_case, number=1)   
+        execution_time = timeit.timeit(self.test_case, number=1)
+        # if a timelimit was set
+        # check if it was met
+        if self._timelimit is not None:
+            if execution_time <= self._timelimit:
+                self.log('CHECK PASS: test completed before time limit of %.4f' %self._timelimit, False, Back.GREEN)
+                self._num_checks_passed += 1
+            else:
+                self.log('CHECK FAIL: test did not complete before time limit of %.4f' %self._timelimit, True, Back.RED)
+            self._num_checks += 1         
         # print pass/fail, execution time
         if self._num_checks > 0:
             percentage_passed = (self._num_checks_passed * 1.0 / self._num_checks) * 100
@@ -300,10 +330,10 @@ class ExternalProgramTestSuite:
                            self._num_checks,
                            percentage_passed,
                            execution_time))
-        if percentage_passed >= self.case_status_threshold or self._num_checks == 0:
+        if percentage_passed >= self.case_pass_threshold or self._num_checks == 0:
             output_string += " TEST PASS"
-            if self.case_status_threshold != 100:
-                output_string += " with %.2f%% threshold" % self.case_status_threshold
+            if self.case_pass_threshold != 100:
+                output_string += " with %.2f%% threshold" % self.case_pass_threshold
             self.log(output_string, False, Back.GREEN)
             self._num_tests_passed += 1
         else:
@@ -348,10 +378,10 @@ class ExternalProgramTestSuite:
                                self._total_checks,
                                percentage_checks_passed,
                                ExternalProgramTestSuite._test_suites[self.suite_name]['execution_time']))
-            if percentage_tests_passed >= self.suite_status_threshold:
+            if percentage_tests_passed >= self.suite_pass_threshold and self._suite_timelimit_met:
                 output_string += " OK"
-                if self.suite_status_threshold != 100:
-                    output_string += " with %.2f%% threshold" % self.suite_status_threshold
+                if self.suite_pass_threshold != 100:
+                    output_string += " with %.2f%% threshold" % self.suite_pass_threshold
                 self.log(output_string, False, Back.GREEN)
                 passed = True
             else:
@@ -392,8 +422,7 @@ class ExternalProgramTestSuite:
                 self._num_checks_passed += 1
             else:
                 self.log('CHECK FAIL', True, Back.RED)            
-            self.log("%.4f seconds" %(execution_time))
-            ExternalProgramTestSuite._test_suites[self.suite_name]['execution_time'] += execution_time
+            self.log("%.4f seconds" %(execution_time))   
         else:
              self.log('CHECK FAIL', True, Back.RED)
         self._num_checks += 1
@@ -451,7 +480,7 @@ class ExternalProgramTestSuite:
                 self.log("TOTALS");
                 self.log("." * ExternalProgramTestSuite._num_formatting_chars)                      
                 percentage_passed = (total_suites_passed * 1.0 / total_num_suites) * 100
-                self.log("%d/%d (%.2f%%) SUITES\n%d/%d (%.2f%%) TEST\n%d/%d (%.2f%%) CHECKS\nin %.4f seconds"
+                self.log("%d/%d (%.2f%%) SUITES\n%d/%d (%.2f%%) TESTS\n%d/%d (%.2f%%) CHECKS\nin %.4f seconds"
                          %(total_suites_passed,
                            total_num_suites,
                            percentage_passed,
@@ -471,23 +500,3 @@ class ExternalProgramTestSuite:
             print(Fore.RED
                   + '[%s] %s' %(type(e).__name__, e)
                   + Fore.RESET + Back.RESET + Style.RESET_ALL)
-
-def name(name):
-    """ Test case name decorator 
-    """    
-    def decorator(function):
-        def wrapper(self):
-            self._name = name
-            function(self)
-        return wrapper
-    return decorator
-          
-def description(description):
-    """ Test case description decorator 
-    """    
-    def decorator(function):
-        def wrapper(self):
-            self._description = description
-            function(self)
-        return wrapper
-    return decorator
