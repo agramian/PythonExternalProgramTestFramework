@@ -7,6 +7,9 @@ import shutil
 import time
 import timeit
 from sets import Set
+
+import inspect
+
 import colorama
 colorama.init()
 from colorama import Fore, Back, Style
@@ -18,22 +21,6 @@ Style: DIM, NORMAL, BRIGHT, RESET_ALL
 from test_case_decorators import *
 from assert_variable_type import *
 from run_subprocess import run_subprocess, TimeoutError
-
-def case_header(function):
-    """ Test case header output decorator 
-    """  
-    def wrapper(self):
-        # print case name
-        self.log("-" * ExternalProgramTestSuite._num_formatting_chars)
-        self.log("CASE: %s" %self._name,
-                 False,
-                 ExternalProgramTestSuite.case_header_color)
-        # print description if any
-        if self._description is not None:
-            self.log("Description: %s" %(str(self._description)))
-        self.log("-" * ExternalProgramTestSuite._num_formatting_chars)        
-        function(self)
-    return wrapper
 
 class ExternalProgramTestSuite:
     """ A Class for creating Test Suites with
@@ -167,9 +154,8 @@ class ExternalProgramTestSuite:
         self.case_pass_threshold = 100
         # test case time limit
         self._timelimit = self.suite_case_timelimit
-        # skip setup and teardown
-        self._skip_setup = False
-        self._skip_teardown = False
+        # wait to print case header
+        self._wait_sem = 0
 
     def _setup_suite(self, **kwargs):
         """ 
@@ -191,7 +177,7 @@ class ExternalProgramTestSuite:
                 self._suite_setup = getattr(self, name)
             elif name == "teardown":
                 self._suite_teardown = getattr(self, name)
-            else:              
+            elif 'fixture' not in name.lower(): 
                 self.test_cases.append(name)             
 
     def _setup_case(self):
@@ -221,9 +207,7 @@ class ExternalProgramTestSuite:
         [assert_variable_type(x, [str, NoneType]) for x in string_vars]
         # bool
         bool_vars = [self.print_process_output,
-                     self.log_framework_output,
-                     self._skip_setup,
-                     self._skip_teardown]
+                     self.log_framework_output]
         [assert_variable_type(x, bool) for x in bool_vars]
         # float
         float_vars = [self._timelimit,
@@ -304,13 +288,49 @@ class ExternalProgramTestSuite:
         # print test result
         self._print_suite_results()       
 
-    @case_header
+    def case_header(self):
+        """ Test case header output 
+        """  
+        # print case name
+        self.log("-" * ExternalProgramTestSuite._num_formatting_chars)
+        self.log("CASE: %s" %self._name,
+                 False,
+                 ExternalProgramTestSuite.case_header_color)
+        # print description if any
+        if self._description is not None:
+            self.log("Description: %s" %(str(self._description)))
+        self.log("-" * ExternalProgramTestSuite._num_formatting_chars)        
+
     def _run_test_case(self):
         """
         Run an individual test case
         """
+        # read source file to see decorators and
+        # call case_header at the right time
+        test_function = self._name
+        suite_class =  str(self.__class__).rpartition('.')[2]
+        lines = []
+        save_lines = False
+        with open(inspect.getmodule(self.__class__).__file__) as f:
+            for line in f:
+                if suite_class in line:
+                    save_lines = True
+                if save_lines and test_function in line:
+                    break
+                if save_lines and 'def ' in line:
+                    lines = []
+                if (save_lines
+                    and len(line.strip()) > 0
+                    and line.strip()[0] == "@"):
+                    lines.append(line.strip().rpartition('(')[0])
+        # if name and description decorators 
+        # increment wait case header semaphore
+        self._wait_sem = len([(x) for x in lines if "@name" in x or "@description" in x])
+        # if semaphor is 0 print case header immediately
+        if self._wait_sem == 0:
+            self.case_header()
         # run test case
-        execution_time = timeit.timeit(self.test_case, number=1)
+        execution_time = timeit.timeit(self.test_case, number=1)        
         # if a timelimit was set
         # check if it was met
         if self._timelimit is not None:
