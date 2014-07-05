@@ -58,11 +58,11 @@ def run_subprocess(executable_command,
         # set deadline if timeout was set
         _deadline = None
         if timeout is not None:           
-            _deadline = time.clock() + timeout
+            _deadline = timeit.default_timer() + timeout
         # poll process while it runs
         while process.poll() is None:
             # throw TimeoutError if timeout was specified and deadline has passed           
-            if _deadline is not None and time.clock() > _deadline and process.poll() is None:
+            if _deadline is not None and timeit.default_timer() > _deadline and process.poll() is None:
                 process.terminate()
                 raise TimeoutError("Sub-process did not complete before %.4f seconds elapsed" %(timeout))
             # sleep to yield for other processes           

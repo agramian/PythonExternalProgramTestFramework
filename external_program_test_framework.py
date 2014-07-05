@@ -4,7 +4,6 @@
 import sys
 import os
 import shutil
-import time
 import timeit
 from sets import Set
 
@@ -131,7 +130,9 @@ class ExternalProgramTestSuite:
         # timelimit values
         self._suite_timelimit_met = True
         self.suite_timelimit = None
-        self.suite_case_timelimit = None                        
+        self.suite_case_timelimit = None
+        # invalid args list 
+        self._invalid_args = []                     
 
     def _set_case_defaults(self):
         """ 
@@ -156,6 +157,10 @@ class ExternalProgramTestSuite:
         self._timelimit = self.suite_case_timelimit
         # wait to print case header
         self._wait_sem = 0
+        # fixture, setup, teardown
+        self._fixture = None
+        self._case_setup = None
+        self._case_teardown = None
 
     def _setup_suite(self, **kwargs):
         """ 
@@ -181,7 +186,7 @@ class ExternalProgramTestSuite:
                 self.test_cases.append(name)             
 
     def _setup_case(self):
-        # if not suites have been run and the overwriet log file
+        # if a suite has startted running and the overwrite log file
         # flag was set to True, truncate the log files    
         if self.overwrite_log_file and (not ExternalProgramTestSuite._has_run
                                         or len([(x) for x in [self.stdout_file, self.stderr_file]
@@ -192,46 +197,91 @@ class ExternalProgramTestSuite:
                     f.truncate(0)           
     
     def _end_case(self):
-        pass
+        # call fixture teardown if set
+        if self._case_teardown is not None:
+            if isinstance(self._case_teardown, MethodType):
+                self._case_teardown(self)
+            else:
+                self._case_teardown() 
+
+    def _validate_argument(self, argument, types):
+        key = argument.keys()[0]     
+        valid, message = assert_variable_type(argument[key], types, False)
+        if not valid:
+            self._invalid_args.append("%s: %s" %(key, message))
+
+    def _validate_suite_arguments(self):
+        """ 
+        Validate test suite argument types
+        """
+        # reset invalid args list 
+        self._invalid_args = []
+        #string        
+        string_vars = [{"suite_description": self.suite_description},
+                       {"stdout_file": self.stdout_file},
+                       {"stderr_file": self.stderr_file}]
+        [self._validate_argument(x, [str, NoneType]) for x in string_vars]
+        # bool
+        bool_vars = [{"overwrite_log_file": self.overwrite_log_file},
+                     {"print_process_output": self.print_process_output},
+                     {"log_framework_output": self.log_framework_output}]
+        [self._validate_argument(x, bool) for x in bool_vars]
+        # float
+        float_vars = [{"suite_timelimit": self.suite_timelimit},
+                      {"suite_case_timelimit": self.suite_case_timelimit}]
+        [self._validate_argument(x, [int, float, NoneType]) for x in float_vars]
+        # functions
+        function_vars = [{"suite setup": self._suite_setup},
+                         {"suite teardown": self._suite_teardown}]
+        [self._validate_argument(x, [MethodType, NoneType]) for x in function_vars]
+        # raise exception if any invalid args
+        if len(self._invalid_args) > 0:
+            raise InvalidArgument(('\r\n').join(self._invalid_args))
 
     def _validate_test_arguments(self):
         """ 
         Validate test case argument types
         """
+        # reset invalid args list 
+        self._invalid_args = []
         #string
-        string_vars = [self._description,
-                       self._name,
-                       self.stdout_file,
-                       self.stderr_file]
-        string_vars = string_vars
-        [assert_variable_type(x, [str, NoneType]) for x in string_vars]
-        # bool
-        bool_vars = [self.print_process_output,
-                     self.log_framework_output]
-        [assert_variable_type(x, bool) for x in bool_vars]
+        string_vars = [{'description': self._description},
+                       {'name': self._name}]
+        [self._validate_argument(x, [str, NoneType]) for x in string_vars]        
         # float
-        float_vars = [self._timelimit,
-                      self.suite_timelimit,
-                      self.suite_case_timelimit]
-        [assert_variable_type(x, [int, float, NoneType]) for x in float_vars]
-        # functions
-        function_vars = [self._suite_setup,
-                         self._suite_teardown]
-        [assert_variable_type(x, [MethodType, NoneType]) for x in function_vars]     
+        float_vars = [{'timelimit': self._timelimit}]
+        [self._validate_argument(x, [int, float, NoneType]) for x in float_vars]
+        # fixture
+        try:
+            if self._fixture is not None:
+                self._case_setup, self._case_teardown = self._fixture()
+        except Exception:
+            self._invalid_args.append('a proper fixture returning a setup and teardown function was not provided')        
+        # functions (fixture override)
+        function_vars = [{'case setup': self._case_setup},
+                         {'case teardown': self._case_teardown}]
+        [self._validate_argument(x, [FunctionType, MethodType, NoneType]) for x in function_vars]
+        # raise exception if any invalid args
+        if len(self._invalid_args) > 0:
+            raise InvalidArgument(('\r\n').join(self._invalid_args))        
 
     def run(self, suite_name=None):
         """
         Run the test suite
         """
         # capture start time
-        suite_start_time = time.clock() 
+        suite_start_time = timeit.default_timer()  
         # setup suite
         if suite_name is None:
             suite_name = self.suite_name
         self._setup_suite(**ExternalProgramTestSuite._test_suites[suite_name]['args'])
-        # call suite setup function if set
-        if self._suite_setup is not None:
-            self._suite_setup()         
+        # validate suite args
+        try:
+            self._validate_suite_arguments()
+        except Exception as e:
+            ExternalProgramTestSuite._test_suites[self.suite_name]['has_run'] = True
+            raise SuiteError('Error in test suite "%s" [%s] %s'
+                             %(suite_name, type(e).__name__, e))        
         # run all the test cases
         for index, case in enumerate(sorted(self.test_cases)):
             self.test_case = getattr(self, case)
@@ -252,11 +302,13 @@ class ExternalProgramTestSuite:
                          ExternalProgramTestSuite.suite_header_color)
                 if self.suite_description:
                     self.log("Description: %s" %(self.suite_description))
-                    ExternalProgramTestSuite._test_suites[suite_name]['description'] = self.suite_description          
-            # validate args and run the test case
-            try:
-                self._validate_test_arguments()
-                self._run_test_case()               
+                    ExternalProgramTestSuite._test_suites[suite_name]['description'] = self.suite_description
+                # call suite setup function if set
+                if self._suite_setup is not None:
+                    self._suite_setup()         
+            # run the test case
+            try:             
+                self._run_test_case()                              
             except Exception as e:
                 self.log('[%s] %s' %(type(e).__name__, e), True, Fore.RED)
             # set has_run flags
@@ -266,25 +318,24 @@ class ExternalProgramTestSuite:
             ExternalProgramTestSuite._test_suites[self.suite_name]['pass_threshold'] = self.suite_pass_threshold
             # end case routine
             self._end_case()
-        # call suite teardown function if set
-        if self._suite_teardown is not None:
-            self._suite_teardown()
         # capture suite end time
-        suite_end_time = time.clock()
-        suite_time_take = suite_end_time - suite_start_time
-        ExternalProgramTestSuite._test_suites[self.suite_name]['execution_time'] = suite_time_take
+        suite_end_time = timeit.default_timer() 
+        suite_time_taken = suite_end_time - suite_start_time
+        ExternalProgramTestSuite._test_suites[self.suite_name]['execution_time'] = suite_time_taken
         # if a timelimit was set
         # check if it was met
         if self.suite_timelimit is not None:
             self.log("_" * ExternalProgramTestSuite._num_formatting_chars)
-            if suite_time_take <= self.suite_timelimit:
+            if suite_time_taken <= self.suite_timelimit:
                 self.log('CHECK PASS: suite completed before time limit of %.4f' %self.suite_timelimit, False, Back.GREEN)
                 self._total_checks_passed += 1
             else:
                 self.log('CHECK FAIL: suite did not complete before time limit of %.4f' %self.suite_timelimit, True, Back.RED)
                 self._suite_timelimit_met = False
             self._total_checks += 1                            
-            
+        # call suite teardown function if set
+        if self._suite_teardown is not None:
+            self._suite_teardown()            
         # print test result
         self._print_suite_results()       
 
@@ -299,7 +350,18 @@ class ExternalProgramTestSuite:
         # print description if any
         if self._description is not None:
             self.log("Description: %s" %(str(self._description)))
-        self.log("-" * ExternalProgramTestSuite._num_formatting_chars)        
+        self.log("-" * ExternalProgramTestSuite._num_formatting_chars)
+        # validate args
+        try:
+            self._validate_test_arguments()
+        except Exception as e:
+            self.log('[%s] %s' %(type(e).__name__, e), True, Fore.RED)
+        # call fixture setup if set
+        if self._case_setup is not None:
+            if isinstance(self._case_setup, MethodType):
+                self._case_setup(self)
+            else:
+                self._case_setup()                             
 
     def _run_test_case(self):
         """
@@ -323,12 +385,12 @@ class ExternalProgramTestSuite:
                     and len(line.strip()) > 0
                     and line.strip()[0] == "@"):
                     lines.append(line.strip().rpartition('(')[0])
-        # if name and description decorators 
-        # increment wait case header semaphore
-        self._wait_sem = len([(x) for x in lines if "@name" in x or "@description" in x])
+        # semaphore to wait for calling
+        # case_header after all decorators
+        self._wait_sem = len(lines)
         # if semaphor is 0 print case header immediately
         if self._wait_sem == 0:
-            self.case_header()
+            self.case_header()            
         # run test case
         execution_time = timeit.timeit(self.test_case, number=1)        
         # if a timelimit was set
@@ -360,7 +422,7 @@ class ExternalProgramTestSuite:
             output_string += " TEST FAIL"
             self.log(output_string, False, Back.RED)
         self._total_checks += self._num_checks
-        self._total_checks_passed += self._num_checks_passed           
+        self._total_checks_passed += self._num_checks_passed                   
 
     def _print_suite_results(self):
         self.log( "*" * ExternalProgramTestSuite._num_formatting_chars)    
@@ -454,7 +516,12 @@ class ExternalProgramTestSuite:
         """
         ExternalProgramTestSuite._has_run = False
         for suite, properties in ExternalProgramTestSuite._test_suites.items():
-            ExternalProgramTestSuite.run(properties['self'], properties['name'])
+            try:
+                ExternalProgramTestSuite.run(properties['self'], properties['name'])
+            except Exception as e:
+                properties['self'].log('[%s] %s' %(type(e).__name__, e), True, Fore.RED)
+                # print test result
+                properties['self']._print_suite_results()       
         ExternalProgramTestSuite.print_total_results()
         
     @staticmethod
@@ -520,3 +587,6 @@ class ExternalProgramTestSuite:
             print(Fore.RED
                   + '[%s] %s' %(type(e).__name__, e)
                   + Fore.RESET + Back.RESET + Style.RESET_ALL)
+
+class SuiteError(Exception): pass
+class InvalidArgument(Exception): pass
