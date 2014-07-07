@@ -6,3 +6,5 @@
 *.log
 
 Tango-QA_Assignment-Python_MiniTest_Framework.py
+
+.settings/org.eclipse.core.resources.prefs
