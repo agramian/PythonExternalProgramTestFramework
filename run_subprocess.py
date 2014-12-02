@@ -14,7 +14,8 @@ def run_subprocess(executable_command,
                    stdout_file=None,
                    stderr_file=None,
                    poll_seconds=.100,
-                   buffer_size=-1):
+                   buffer_size=-1,
+                   daemon=False):
     """Create and run a subprocess and return the process and
     execution time after it has completed.  The execution time
     does not include the time taken for file i/o when logging
@@ -29,6 +30,9 @@ def run_subprocess(executable_command,
     stderr_file (str) -- file to log stderr to
     poll_seconds(int/float) -- how often in seconds to poll the subprocess 
                                 to check for completion
+    daemon(bool) -- whether the process is a daemon. If True, returns process 
+                    immediately after creation along with start time rather than
+                    execution time.                                
     """
     # validate arguments
     # list
@@ -55,6 +59,10 @@ def run_subprocess(executable_command,
         # wrap p.stdout with a NonBlockingStreamReader object:
         _nbsr_stdout = NBSRW(process.stdout, print_process_output, stdout_file)
         _nbsr_stderr = NBSRW(process.stderr, print_process_output, stderr_file)
+        # if the process is a dameon break
+        # execution time returned is start time
+        if daemon:
+            return
         # set deadline if timeout was set
         _deadline = None
         if timeout is not None:           
